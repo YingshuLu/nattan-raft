@@ -62,31 +62,71 @@ bool NodeServer::addPeer(const Address& addr) {
 
 bool NodeServer::replicate(MessagePtr& pmsg) {
     int type = pmsg->getType();
-
     int nums = peers.size();
+
     for (auto it = peers.begin(); it != peers.end(); it ++) {
         PeerPtr& peer = it->second;
         MessagePtr pmsg0(new Message());
         pmsg0->setRoot(pmsg->getRoot());
-        if (type == RAFT_MSG_APPD_REQ) {
-
-            
-            
+        switch (type) {
+            case RAFT_MSG_APPD_REQ:
+                PrepareAppendRequest(pmsg0, peer);
+                break;
+            case RAFT_MSG_VOTE_REQ:
+                PrepareVoteRequest(pmsg0);
+                break;
+            default:
+                return false;
         }
         peer->replicate(pmsg0);
     }
 
     int cnt = 0;
     pmsg = nullptr;
+    bool success = false;
     while(cnt < nums) {
-        rpcChan.recvTill(pmsg, 300);
-        if (valid(pmsg)) {
-                    
+        if (!rpcChan.recvTill(pmsg, 300)) {
+            break;
         }
+
+        // ingnore result
+        if (!valididateResult(pmsg)) {
+             continue;       
+        }
+
+        Result result;
+        result.setRoot(pmsg->getJsonMessage());
+        if (result.getResult()) {
+            cnt++;
+            if (type == RAFT_MSG_APPD_REQ) {
+                std::string addr = pmsg->getRoot()["address"].asString();
+                auto peer = peers[addr];
+                peer->nextIndex = fLog.lastLogIndex() + 1;
+                peer->matchIndex = fLog.lastLogIndex();
+            }
+        } else {
+            if (type == RAFT_MSG_APPD_REQ) {
+                std::string addr = pmsg->getRoot()["address"].asString();
+                auto peer = peers[addr];
+                if (result.getTerm() == pinfo->currentTerm) {
+                    peer->nextIndex --;
+                }
+            }
+        }
+
+        if (cnt > nums / 2) success = true;
     }
 
-    
+    return success;
+}
 
+bool NodeServer::validateResult(MessagePtr& pmsg) {
+    if (pmsg->needDiscard()) {
+        return false;
+    } 
+    int type = pmsg->getType();
+
+    return type == RAFT_MSG_APPD_RESP;
 }
 
 void NodeServer::loop() {
@@ -109,8 +149,21 @@ void NodeServer::loop() {
 
 
 void NodeServer::Leader() {
+
+   MessagePtr pmsg = nullptr;
+   if (!msgChan.waitTill(heartbeatTimeout)) {
+        
+   }
     
-    
+
+}
+
+void NodeServer::LeaderHandleAppendRequest(MessagePtr& pmsg) {
+    CandidateHandleAppendRequest(pmsg);
+}
+
+void NodeServer::LeaderHandleVoteRequest(MessagePtr& pmsg) {
+    FollowerHandleVoteRequeset(pmsg);
 
 }
 
@@ -130,8 +183,12 @@ void NodeServer::Candidate() {
     request.setLastLogTerm(fLog.lastTerm());
     MessagePtr votemsg(new Message());
     votemsg->setJsonMessage(request);
-    peers.replicateAll(votemsg);
+    if (replicate(votemsg)) {
+        status = LEADER;
+        return;
+    }
 
+    // re-selection
     if (!msgChan.waitTill(randSelectionTimeout, pmsg)) {
         peers.kill();
     }
@@ -311,7 +368,6 @@ void NodeServer::FollowerHandleVoteRequest(MessagePtr& pmsg) {
     pmsg->nofify();
 }
 
-
 void NodeServer::ApplyCommittedLog() {
     Entry e;
     for (int index = pinfo->lastApplied; index <= pinfo->commitIndex; index ++) {
@@ -329,7 +385,36 @@ void NodeServer::PrepareResult(MessagePtr& pmsg, bool success) {
 }
 
 void NodeServer::PrepareAppendRequest(MessagePtr& pmsg, PeerPtr& peer) {
-    
+    AppendRequest request;
+    request.setTerm(pinfo->currentTerm);
+    request.setLeaderId(pinfo->id);
+    request.setLeaderCommit(pinfo->commitIndex);
 
+    request.setPrevLogIndex(fLog.lastIndex());
+    request.setPrevLogTerm(fLog.lastTerm());
+    if (fLog.lastIndex() >= peer->nextIndex) {
+        Entry e;
+        request.setPrevLogIndex(peer->nextIndex - 1);
+        if (fLog.retrieve(peer->nextIndex - 1, e)) {
+            request.setPrevLogTerm(e.getTerm());
+        } else {
+            request.setPrevLogTerm(pinfo->currentTerm);
+        }
+
+        for (int i = peer->nextIndex; i < fLog.lastIndex(); i++) {
+            fLog.retrieve(i, e);
+            request.append(e);
+        }
+    }
+
+    pmsg->setJsonMessage(request);
 }
 
+void NodeServer::PrepareVoteRequest(MessagePtr& pmsg) {
+    VoteRequest request;
+    request.setTerm(pinfo->currentTerm);
+    request.setCandidate(pinfo->id);
+    request.setLastLogIndex(fLog.lastIndex());
+    request.setLastLogTerm(fLog.lastTerm());
+    pmsg->setJsonMessage(request);
+}

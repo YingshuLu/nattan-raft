@@ -438,9 +438,17 @@ public:
         return root["type"].asInt();
     }
 
+    bool needDiscard() {
+        if (root.isMember("discard")) {
+            return root["discard"].asBool();
+        }
+        return false;
+    }
+
     void setJsonMessage(JsonMessage& msg) {
         root["type"] = msg.type();
         root["data"] = msg.getRoot();
+        root["discard"] = false;
     }
 
     Json::Value& getJsonMessage() {
