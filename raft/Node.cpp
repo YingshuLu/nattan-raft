@@ -60,14 +60,10 @@ bool NodeServer::addPeer(const Address& addr) {
     return true;
 }
 
-bool NodeServer::replicate(MessagePtr& pmsg) {
-    int type = pmsg->getType();
-    int nums = peers.size();
-
+bool NodeServer::replicate(int type) {
     for (auto it = peers.begin(); it != peers.end(); it ++) {
         PeerPtr& peer = it->second;
         MessagePtr pmsg0(new Message());
-        pmsg0->setRoot(pmsg->getRoot());
         switch (type) {
             case RAFT_MSG_APPD_REQ:
                 PrepareAppendRequest(pmsg0, peer);
@@ -82,7 +78,8 @@ bool NodeServer::replicate(MessagePtr& pmsg) {
     }
 
     int cnt = 0;
-    pmsg = nullptr;
+    int nums = peers.size();
+    MessagePtr pmsg = nullptr;
     bool success = false;
     while(cnt < nums) {
         if (!rpcChan.recvTill(pmsg, 300)) {
@@ -152,8 +149,25 @@ void NodeServer::Leader() {
 
    MessagePtr pmsg = nullptr;
    if (!msgChan.waitTill(heartbeatTimeout)) {
-        
+       replicate(RAFT_MSG_APPD_REQ);
+       return; 
    }
+    
+   int type = pmsg->getType();
+
+   switch(type) {
+    case RAFT_MSG_APPD_REQ:
+        LeaderHandleAppendRequest(pmsg);
+        break;
+    case RAFT_MSG_VOTE_REQ:
+        LeaderHandleVoteRequest(pmsg);
+        break;
+    case RAFT_MSG_DATA_REQ:
+        LeaderHandleDataRequest(pmsg);
+        break;
+    case 
+   }
+   
     
 
 }
@@ -163,7 +177,10 @@ void NodeServer::LeaderHandleAppendRequest(MessagePtr& pmsg) {
 }
 
 void NodeServer::LeaderHandleVoteRequest(MessagePtr& pmsg) {
-    FollowerHandleVoteRequeset(pmsg);
+    CandidateHandleVoteRequeset(pmsg);
+}
+
+void NodeServer::LeaderHandleDataRequest(MessagePtr& pmsg) {
 
 }
 
@@ -183,7 +200,7 @@ void NodeServer::Candidate() {
     request.setLastLogTerm(fLog.lastTerm());
     MessagePtr votemsg(new Message());
     votemsg->setJsonMessage(request);
-    if (replicate(votemsg)) {
+    if (replicate(RAFT_MSG_VOTE_REQ)) {
         status = LEADER;
         return;
     }
