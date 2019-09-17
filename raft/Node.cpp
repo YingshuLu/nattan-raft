@@ -69,6 +69,8 @@ bool NodeServer::replicate(MessagePtr& pmsg) {
         MessagePtr pmsg0(new Message());
         pmsg0->setRoot(pmsg->getRoot());
         if (type == RAFT_MSG_APPD_REQ) {
+
+            
             
         }
         peer->replicate(pmsg0);
@@ -145,6 +147,7 @@ void NodeServer::Candidate() {
         case RAFT_MSG_VOTE_REQ:
             CandidateHandleVoteResponse(pmsg);
             break;       
+        case RAFT_MSG_DATA_REQ:
         default:
     }    
 }
@@ -272,9 +275,7 @@ void NodeServer::FollowerHandleAppendRequest(MessagePtr& pmsg) {
         pinfo->commitIndex = std::min(leaderCommit, fLog.lastIndex());
     } while(0);
 
-    result.setResult(suceess);
-    result.setTerm(pinfo->currentTerm);
-    pmsg->setJsonMessage(result);
+    PrepareResult(pmsg, success);
     pmsg->nofify();
 }
 
@@ -320,4 +321,15 @@ void NodeServer::ApplyCommittedLog() {
     pinfo->lastApplied = pinfo->commitIndex;
 }
 
+void NodeServer::PrepareResult(MessagePtr& pmsg, bool success) {
+    Result result;
+    result.setResult(success);
+    result.setTerm(pinfo->currentTerm);
+    pmsg->setJsonMessage(result);
+}
+
+void NodeServer::PrepareAppendRequest(MessagePtr& pmsg, PeerPtr& peer) {
+    
+
+}
 
